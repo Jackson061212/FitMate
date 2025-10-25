@@ -58,7 +58,16 @@ const fetchStructuredContent = async (userQuery, systemPrompt, responseSchema) =
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        // Handle specific error codes
+        if (response.status === 503) {
+          throw new Error('Service temporarily unavailable. Please try again in a few moments.');
+        } else if (response.status === 429) {
+          throw new Error('Rate limit exceeded. Please wait a moment before trying again.');
+        } else if (response.status === 400) {
+          throw new Error('Invalid request. Please check your input and try again.');
+        } else {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
       }
 
       const result = await response.json();
@@ -71,9 +80,11 @@ const fetchStructuredContent = async (userQuery, systemPrompt, responseSchema) =
       return JSON.parse(jsonString);
 
     } catch (error) {
-      if (retries > 0 && error.message.includes('429')) {
-        console.warn(`Rate limit hit, retrying in ${4 - retries} seconds...`);
-        await new Promise(resolve => setTimeout(resolve, (4 - retries) * 1000));
+      // Retry logic for specific errors
+      if (retries > 0 && (error.message.includes('503') || error.message.includes('429'))) {
+        const delay = error.message.includes('503') ? 5000 : (4 - retries) * 1000;
+        console.warn(`Service error, retrying in ${delay/1000} seconds...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
         return attemptFetch(retries - 1);
       }
       throw error;
@@ -259,6 +270,14 @@ export default function FitMate() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
   const [uploadMode, setUploadMode] = useState('single'); // 'single' or 'bulk'
+
+  // Shopping and gaps insight states
+  const [closetGaps, setClosetGaps] = useState([]);
+  const [shoppingItems, setShoppingItems] = useState([]);
+  const [currentShoppingIndex, setCurrentShoppingIndex] = useState(0);
+  const [shoppingPrompt, setShoppingPrompt] = useState('');
+  const [likedItems, setLikedItems] = useState([]);
+  const [cartItems, setCartItems] = useState([]);
 
   const [occasion, setOccasion] = useState('');
   const [recommendedOutfit, setRecommendedOutfit] = useState(null);
@@ -644,6 +663,213 @@ export default function FitMate() {
     loadUserPreferences();
   }, [currentUser]);
 
+  // Closet Gaps Analysis
+  const analyzeClosetGaps = async () => {
+    const userWardrobe = getUserWardrobe();
+    if (userWardrobe.length < 3) {
+      setError('You need at least 3 items in your wardrobe to analyze gaps');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const wardrobeSummary = userWardrobe.map(item => ({
+        type: item.aiDescription.type,
+        color: item.aiDescription.color,
+        style: item.aiDescription.style,
+        material: item.aiDescription.material
+      }));
+
+      const userQuery = `Analyze this wardrobe and suggest items that would complete more outfits:
+
+Current wardrobe:
+${JSON.stringify(wardrobeSummary, null, 2)}
+
+User preferences:
+- Body Type: ${currentUser?.preferences?.bodyType || 'Not specified'}
+- Style Preferences: ${currentUser?.preferences?.stylePreferences?.join(', ') || 'None specified'}
+- Dislikes: ${currentUser?.preferences?.dislikes?.join(', ') || 'None specified'}`;
+
+      const systemPrompt = `You are a fashion consultant. Analyze the user's wardrobe and identify gaps that would help create more complete outfits.
+
+Consider:
+1. Missing essential items (e.g., if they have tops but no bottoms)
+2. Color gaps (missing neutral colors, or colors that would complement existing items)
+3. Style gaps (missing formal items if they only have casual, etc.)
+4. Seasonal gaps (missing warm items for winter, etc.)
+5. Occasion gaps (missing work clothes, party clothes, etc.)
+
+Return 3-5 specific item suggestions with:
+- itemType: The specific type of item needed
+- reason: Why this item would complete more outfits
+- priority: High/Medium/Low priority
+- suggestedColors: Array of 2-3 color suggestions
+- suggestedStyles: Array of 2-3 style suggestions
+
+Return ONLY valid JSON matching the schema.`;
+
+      const gapsSchema = {
+        type: "OBJECT",
+        properties: {
+          suggestions: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                itemType: { type: "STRING" },
+                reason: { type: "STRING" },
+                priority: { type: "STRING" },
+                suggestedColors: {
+                  type: "ARRAY",
+                  items: { type: "STRING" }
+                },
+                suggestedStyles: {
+                  type: "ARRAY",
+                  items: { type: "STRING" }
+                }
+              }
+            }
+          }
+        }
+      };
+
+      const result = await fetchStructuredContent(userQuery, systemPrompt, gapsSchema);
+      setClosetGaps(result.suggestions || []);
+      setSuccess('Closet gaps analyzed successfully!');
+    } catch (err) {
+      setError(err.message || 'Failed to analyze closet gaps');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Shopping Functions
+  const generateShoppingItems = async (prompt) => {
+    if (!prompt.trim()) {
+      setError('Please enter a shopping prompt');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const userQuery = `Generate shopping suggestions based on this prompt: "${prompt}"
+
+User preferences:
+- Body Type: ${currentUser?.preferences?.bodyType || 'Not specified'}
+- Style Preferences: ${currentUser?.preferences?.stylePreferences?.join(', ') || 'None specified'}
+- Dislikes: ${currentUser?.preferences?.dislikes?.join(', ') || 'None specified'}
+- Comfort Preferences: ${currentUser?.preferences?.comfortPreferences?.join(', ') || 'None specified'}`;
+
+      const systemPrompt = `You are a personal shopping assistant. Generate 10 clothing item suggestions based on the user's prompt and preferences.
+
+For each item, provide:
+- name: Descriptive name of the item
+- type: Type of clothing (e.g., "T-shirt", "Jeans", "Dress")
+- brand: A realistic brand name
+- price: A realistic price range (e.g., "$25-35", "$80-120")
+- description: Brief description of the item
+- imageUrl: A placeholder URL (use "https://via.placeholder.com/300x400/cccccc/666666?text=Item+Name")
+- affiliateUrl: A placeholder affiliate link (use "https://example.com/product/123")
+- colors: Array of available colors
+- sizes: Array of available sizes
+
+Return ONLY valid JSON matching the schema.`;
+
+      const shoppingSchema = {
+        type: "OBJECT",
+        properties: {
+          items: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                name: { type: "STRING" },
+                type: { type: "STRING" },
+                brand: { type: "STRING" },
+                price: { type: "STRING" },
+                description: { type: "STRING" },
+                imageUrl: { type: "STRING" },
+                affiliateUrl: { type: "STRING" },
+                colors: {
+                  type: "ARRAY",
+                  items: { type: "STRING" }
+                },
+                sizes: {
+                  type: "ARRAY",
+                  items: { type: "STRING" }
+                }
+              }
+            }
+          }
+        }
+      };
+
+      const result = await fetchStructuredContent(userQuery, systemPrompt, shoppingSchema);
+      setShoppingItems(result.items || []);
+      setCurrentShoppingIndex(0);
+      setSuccess('Shopping items generated successfully!');
+    } catch (err) {
+      console.error('Shopping generation error:', err);
+      
+      // Fallback to mock data if API fails
+      if (err.message.includes('503') || err.message.includes('Service temporarily unavailable')) {
+        console.log('Using fallback mock data due to service unavailability');
+        const mockItems = generateMockShoppingItems(prompt);
+        setShoppingItems(mockItems);
+        setCurrentShoppingIndex(0);
+        setSuccess('Shopping items generated (using fallback data due to service issues)!');
+      } else {
+        setError(err.message || 'Failed to generate shopping items');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fallback mock data generator
+  const generateMockShoppingItems = (prompt) => {
+    const brands = ['Zara', 'H&M', 'Uniqlo', 'Nike', 'Adidas', 'Levi\'s', 'Gap', 'Forever 21'];
+    const colors = ['Black', 'White', 'Navy', 'Gray', 'Beige', 'Red', 'Blue', 'Green'];
+    const sizes = ['XS', 'S', 'M', 'L', 'XL'];
+    
+    const mockItems = [];
+    for (let i = 1; i <= 10; i++) {
+      mockItems.push({
+        name: `${prompt.split(' ')[0]} Item ${i}`,
+        type: prompt.includes('dress') ? 'Dress' : prompt.includes('shirt') ? 'Shirt' : 'Top',
+        brand: brands[Math.floor(Math.random() * brands.length)],
+        price: `$${Math.floor(Math.random() * 100) + 20}-${Math.floor(Math.random() * 100) + 80}`,
+        description: `A stylish ${prompt.split(' ')[0]} item perfect for your wardrobe.`,
+        imageUrl: `https://via.placeholder.com/300x400/cccccc/666666?text=Item+${i}`,
+        affiliateUrl: `https://example.com/product/${i}`,
+        colors: colors.slice(0, Math.floor(Math.random() * 3) + 2),
+        sizes: sizes.slice(0, Math.floor(Math.random() * 3) + 3)
+      });
+    }
+    return mockItems;
+  };
+
+  const handleSwipeAction = (action, item) => {
+    if (action === 'like') {
+      setLikedItems(prev => [...prev, item]);
+    } else if (action === 'dislike') {
+      // Just move to next item
+    } else if (action === 'cart') {
+      setCartItems(prev => [...prev, item]);
+    }
+    
+    // Move to next item
+    if (currentShoppingIndex < shoppingItems.length - 1) {
+      setCurrentShoppingIndex(prev => prev + 1);
+    } else {
+      setSuccess('You\'ve seen all items! Check your liked items and cart.');
+    }
+  };
+
   const getUserWardrobe = () => {
     return wardrobe.filter(item => item.userId === currentUser?.id);
   };
@@ -738,6 +964,22 @@ export default function FitMate() {
                     >
                       <Settings className="w-4 h-4" /> Preferences
                     </button>
+                    <button
+                        onClick={() => { setCurrentView('gaps'); setError(''); setSuccess(''); }}
+                        className={`px-4 py-2 rounded-lg flex items-center gap-2 transition ${
+                            currentView === 'gaps' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                    >
+                      <Sparkles className="w-4 h-4" /> Closet Gaps
+                    </button>
+                    <button
+                        onClick={() => { setCurrentView('shop'); setError(''); setSuccess(''); }}
+                        className={`px-4 py-2 rounded-lg flex items-center gap-2 transition ${
+                            currentView === 'shop' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                    >
+                      <ShoppingBag className="w-4 h-4" /> Shop
+                    </button>
                     <div className="flex items-center gap-3 ml-4 pl-4 border-l">
                       <div className="flex items-center gap-2">
                         <User className="w-4 h-4 text-gray-600" />
@@ -807,6 +1049,8 @@ export default function FitMate() {
           />}
           {currentView === 'wardrobe' && currentUser && <WardrobeView wardrobe={getUserWardrobe()} handleDeleteItem={handleDeleteItem} success={success} setCurrentView={setCurrentView} />}
           {currentView === 'preferences' && currentUser && <PreferencesView userPreferences={userPreferences} handlePreferencesUpdate={handlePreferencesUpdate} success={success} error={error} />}
+          {currentView === 'gaps' && currentUser && <ClosetGapsView closetGaps={closetGaps} analyzeClosetGaps={analyzeClosetGaps} loading={loading} error={error} success={success} />}
+          {currentView === 'shop' && currentUser && <ShoppingView shoppingItems={shoppingItems} currentShoppingIndex={currentShoppingIndex} shoppingPrompt={shoppingPrompt} setShoppingPrompt={setShoppingPrompt} generateShoppingItems={generateShoppingItems} handleSwipeAction={handleSwipeAction} likedItems={likedItems} cartItems={cartItems} loading={loading} error={error} success={success} />}
           {currentView === 'outfit' && currentUser && <OutfitView occasion={occasion} setOccasion={setOccasion} handleGenerateOutfit={handleGenerateOutfit} recommendedOutfit={recommendedOutfit} loading={loading} error={error} success={success} />}
           {currentView === 'eventplanner' && currentUser && <EventPlanner />}
         </main>
@@ -1522,6 +1766,281 @@ const PreferencesView = ({ userPreferences, handlePreferencesUpdate, success, er
           </button>
         </form>
       </div>
+    </div>
+  );
+};
+
+const ClosetGapsView = ({ closetGaps, analyzeClosetGaps, loading, error, success }) => (
+  <div className="max-w-4xl mx-auto">
+    <h2 className="text-3xl font-bold text-gray-800 mb-6">Closet Gaps Insight</h2>
+    
+    <div className="bg-white rounded-xl shadow-sm p-8 mb-6">
+      <p className="text-gray-600 mb-6">
+        Discover what items would complete more outfits in your wardrobe. Our AI analyzes your current collection and suggests missing pieces.
+      </p>
+
+      {success && <div className="bg-green-50 text-green-700 p-3 rounded-lg mb-6 text-sm flex items-center gap-2">
+        <Sparkles className="w-4 h-4" /> {success}
+      </div>}
+      {error && <div className="bg-red-50 text-red-700 p-3 rounded-lg mb-6 text-sm">{error}</div>}
+
+      <button
+        onClick={analyzeClosetGaps}
+        disabled={loading}
+        className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 rounded-lg font-semibold hover:from-indigo-700 hover:to-purple-700 transition flex items-center justify-center gap-2 disabled:opacity-50"
+      >
+        {loading ? (
+          <>
+            <Loader2 className="w-5 h-5 animate-spin" />
+            Analyzing Your Wardrobe...
+          </>
+        ) : (
+          <>
+            <Sparkles className="w-5 h-5" />
+            Analyze Closet Gaps
+          </>
+        )}
+      </button>
+    </div>
+
+    {closetGaps.length > 0 && (
+      <div className="space-y-4">
+        <h3 className="text-2xl font-bold text-gray-800 mb-4">Suggested Items to Complete Your Wardrobe</h3>
+        {closetGaps.map((gap, index) => (
+          <div key={index} className="bg-white rounded-xl shadow-sm p-6">
+            <div className="flex justify-between items-start mb-3">
+              <h4 className="text-xl font-semibold text-gray-800">{gap.itemType}</h4>
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                gap.priority === 'High' ? 'bg-red-100 text-red-700' :
+                gap.priority === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                'bg-green-100 text-green-700'
+              }`}>
+                {gap.priority} Priority
+              </span>
+            </div>
+            <p className="text-gray-600 mb-4">{gap.reason}</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <h5 className="font-medium text-gray-700 mb-2">Suggested Colors:</h5>
+                <div className="flex flex-wrap gap-2">
+                  {gap.suggestedColors.map((color, i) => (
+                    <span key={i} className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-sm">
+                      {color}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <h5 className="font-medium text-gray-700 mb-2">Suggested Styles:</h5>
+                <div className="flex flex-wrap gap-2">
+                  {gap.suggestedStyles.map((style, i) => (
+                    <span key={i} className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-sm">
+                      {style}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+);
+
+const ShoppingView = ({ 
+  shoppingItems, currentShoppingIndex, shoppingPrompt, setShoppingPrompt, 
+  generateShoppingItems, handleSwipeAction, likedItems, cartItems, 
+  loading, error, success 
+}) => {
+  const currentItem = shoppingItems[currentShoppingIndex];
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      <h2 className="text-3xl font-bold text-gray-800 mb-6">Tinder-Style Shopping</h2>
+      
+      <div className="bg-white rounded-xl shadow-sm p-8 mb-6">
+        <p className="text-gray-600 mb-6">
+          Swipe through personalized clothing suggestions! Right to like, left to dislike, up to add to cart.
+        </p>
+
+        {success && <div className="bg-green-50 text-green-700 p-3 rounded-lg mb-6 text-sm flex items-center gap-2">
+          <Sparkles className="w-4 h-4" /> {success}
+        </div>}
+        {error && <div className="bg-red-50 text-red-700 p-3 rounded-lg mb-6 text-sm">{error}</div>}
+
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            What are you looking for?
+          </label>
+          <input
+            type="text"
+            value={shoppingPrompt}
+            onChange={(e) => setShoppingPrompt(e.target.value)}
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-transparent mb-4"
+            placeholder="e.g., summer casual wear, work outfits, party dresses"
+          />
+          <button
+            onClick={() => generateShoppingItems(shoppingPrompt)}
+            disabled={loading || !shoppingPrompt.trim()}
+            className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 rounded-lg font-semibold hover:from-indigo-700 hover:to-purple-700 transition flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {loading ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Generating Items...
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-5 h-5" />
+                Start Shopping
+              </>
+            )}
+          </button>
+          
+          {/* Retry button for when API fails */}
+          {error && error.includes('503') && (
+            <button
+              onClick={() => generateShoppingItems(shoppingPrompt)}
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-orange-500 to-red-500 text-white py-2 rounded-lg font-medium hover:from-orange-600 hover:to-red-600 transition flex items-center justify-center gap-2 disabled:opacity-50 mt-2"
+            >
+              <Sparkles className="w-4 h-4" />
+              Retry (Service may be back online)
+            </button>
+          )}
+        </div>
+      </div>
+
+      {shoppingItems.length > 0 && currentItem && (
+        <div className="space-y-6">
+          <div className="text-center mb-4">
+            <span className="text-gray-500">
+              {currentShoppingIndex + 1} of {shoppingItems.length}
+            </span>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+            <div className="relative">
+              <img 
+                src={currentItem.imageUrl} 
+                alt={currentItem.name}
+                className="w-full h-96 object-cover"
+              />
+              <div className="absolute top-4 right-4 bg-white rounded-full p-2 shadow-lg">
+                <span className="text-sm font-medium text-gray-700">{currentItem.price}</span>
+              </div>
+            </div>
+            
+            <div className="p-6">
+              <div className="flex justify-between items-start mb-3">
+                <h3 className="text-xl font-semibold text-gray-800">{currentItem.name}</h3>
+                <span className="text-sm text-gray-500">{currentItem.brand}</span>
+              </div>
+              
+              <p className="text-gray-600 mb-4">{currentItem.description}</p>
+              
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div>
+                  <h4 className="font-medium text-gray-700 mb-2">Available Colors:</h4>
+                  <div className="flex flex-wrap gap-1">
+                    {currentItem.colors.map((color, i) => (
+                      <span key={i} className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs">
+                        {color}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h4 className="font-medium text-gray-700 mb-2">Available Sizes:</h4>
+                  <div className="flex flex-wrap gap-1">
+                    {currentItem.sizes.map((size, i) => (
+                      <span key={i} className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-xs">
+                        {size}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-center gap-4">
+                <button
+                  onClick={() => handleSwipeAction('dislike', currentItem)}
+                  className="px-6 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600 transition flex items-center gap-2"
+                >
+                  <span className="text-xl">👎</span> Dislike
+                </button>
+                <button
+                  onClick={() => handleSwipeAction('like', currentItem)}
+                  className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition flex items-center gap-2"
+                >
+                  <span className="text-xl">👍</span> Like
+                </button>
+                <button
+                  onClick={() => handleSwipeAction('cart', currentItem)}
+                  className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition flex items-center gap-2"
+                >
+                  <span className="text-xl">🛒</span> Add to Cart
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(likedItems.length > 0 || cartItems.length > 0) && (
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+          {likedItems.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm p-6">
+              <h3 className="text-xl font-semibold text-gray-800 mb-4">Liked Items ({likedItems.length})</h3>
+              <div className="space-y-3">
+                {likedItems.map((item, index) => (
+                  <div key={index} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    <img src={item.imageUrl} alt={item.name} className="w-12 h-12 object-cover rounded" />
+                    <div className="flex-1">
+                      <h4 className="font-medium text-gray-800">{item.name}</h4>
+                      <p className="text-sm text-gray-600">{item.brand} • {item.price}</p>
+                    </div>
+                    <a 
+                      href={item.affiliateUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="px-3 py-1 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition"
+                    >
+                      Shop
+                    </a>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {cartItems.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm p-6">
+              <h3 className="text-xl font-semibold text-gray-800 mb-4">Cart ({cartItems.length})</h3>
+              <div className="space-y-3">
+                {cartItems.map((item, index) => (
+                  <div key={index} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    <img src={item.imageUrl} alt={item.name} className="w-12 h-12 object-cover rounded" />
+                    <div className="flex-1">
+                      <h4 className="font-medium text-gray-800">{item.name}</h4>
+                      <p className="text-sm text-gray-600">{item.brand} • {item.price}</p>
+                    </div>
+                    <a 
+                      href={item.affiliateUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition"
+                    >
+                      Buy Now
+                    </a>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
