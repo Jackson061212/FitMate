@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Sparkles, User, LogOut, Trash2, ShoppingBag, Loader2, Home, FolderOpen, Archive, CheckCircle, Settings } from 'lucide-react';
+import { Upload, Sparkles, User, LogOut, Trash2, ShoppingBag, Loader2, Home, FolderOpen, Archive, CheckCircle, Settings, Calendar } from 'lucide-react';
 import JSZip from 'jszip';
+import EventPlanner from './EventPlanner';
 
 // API Key
 const GEMINI_API_KEY = 'AIzaSyAB_Op-OSznS9AVm6QYqqfiBson5yNO46g';
@@ -82,7 +83,7 @@ const fetchStructuredContent = async (userQuery, systemPrompt, responseSchema) =
   return attemptFetch();
 };
 
-const analyzeClothingWithGemini = async (imageBase64) => {
+const analyzeClothingWithGemini = async (imageBase64, mimeType = 'image/jpeg') => {
   const userQuery = `Analyze this clothing item image and provide detailed information about it.`;
 
   const systemPrompt = `You are an expert fashion analyst. Analyze the clothing item in the image and provide:
@@ -102,7 +103,7 @@ Be specific and accurate. Return ONLY valid JSON matching the schema.`;
         { text: userQuery },
         {
           inline_data: {
-            mime_type: 'image/jpeg',
+            mime_type: mimeType,
             data: imageBase64
           }
         }
@@ -127,6 +128,7 @@ Be specific and accurate. Return ONLY valid JSON matching the schema.`;
 
       if (!response.ok) {
         const errorData = await response.json();
+        console.error('Gemini API Error:', errorData);
         throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
       }
 
@@ -344,6 +346,25 @@ export default function FitMate() {
       return;
     }
 
+    // Validate file type
+    if (!selectedFile.type.startsWith('image/')) {
+      setError('Please select a valid image file');
+      return;
+    }
+
+    // Check for supported formats
+    const supportedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!supportedTypes.includes(selectedFile.type.toLowerCase())) {
+      setError('Please select a JPEG, PNG, or WebP image file');
+      return;
+    }
+
+    // Validate file size (max 10MB)
+    if (selectedFile.size > 10 * 1024 * 1024) {
+      setError('Image file is too large. Please select an image smaller than 10MB');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
@@ -352,7 +373,14 @@ export default function FitMate() {
       reader.onloadend = async () => {
         try {
           const base64 = reader.result.split(',')[1];
-          const aiDescription = await analyzeClothingWithGemini(base64);
+          console.log('Image details:', {
+            fileName: selectedFile.name,
+            fileSize: selectedFile.size,
+            fileType: selectedFile.type,
+            base64Length: base64.length
+          });
+          
+          const aiDescription = await analyzeClothingWithGemini(base64, selectedFile.type);
 
           const newItem = {
             id: Date.now().toString(),
@@ -373,7 +401,8 @@ export default function FitMate() {
             setSuccess('');
           }, 2000);
         } catch (err) {
-          setError(err.message);
+          console.error('Upload error:', err);
+          setError(`Failed to analyze image: ${err.message}. Please try a different image or check if the image format is supported.`);
           setLoading(false);
         }
       };
@@ -650,6 +679,14 @@ export default function FitMate() {
                       <Sparkles className="w-4 h-4" /> Get Outfit
                     </button>
                     <button
+                        onClick={() => { setCurrentView('eventplanner'); setError(''); setSuccess(''); }}
+                        className={`px-4 py-2 rounded-lg flex items-center gap-2 transition ${
+                            currentView === 'eventplanner' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                    >
+                      <Calendar className="w-4 h-4" /> Event Planner
+                    </button>
+                    <button
                         onClick={() => { setCurrentView('preferences'); setError(''); setSuccess(''); }}
                         className={`px-4 py-2 rounded-lg flex items-center gap-2 transition ${
                             currentView === 'preferences' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100'
@@ -724,6 +761,7 @@ export default function FitMate() {
           {currentView === 'wardrobe' && currentUser && <WardrobeView wardrobe={getUserWardrobe()} handleDeleteItem={handleDeleteItem} success={success} setCurrentView={setCurrentView} />}
           {currentView === 'preferences' && currentUser && <PreferencesView userPreferences={userPreferences} handlePreferencesUpdate={handlePreferencesUpdate} success={success} error={error} />}
           {currentView === 'outfit' && currentUser && <OutfitView occasion={occasion} setOccasion={setOccasion} handleGenerateOutfit={handleGenerateOutfit} recommendedOutfit={recommendedOutfit} loading={loading} error={error} success={success} />}
+          {currentView === 'eventplanner' && currentUser && <EventPlanner />}
         </main>
       </div>
   );
