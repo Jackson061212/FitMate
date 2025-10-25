@@ -1,70 +1,87 @@
-# Getting Started with Create React App
+# 👕 FitMate — Your AI-Powered College Wardrobe Assistant
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+**FitMate** is an AI-powered wardrobe and outfit recommender built for **college students** who want to look good without wasting time deciding what to wear.  
+Upload your clothes, let AI organize your wardrobe, and get daily outfit ideas tailored to your **weather**, **occasion**, and **personal style**.
 
-## Available Scripts
+---
 
-In the project directory, you can run:
+## 🎯 Core Value
+> Students stop wasting time deciding what to wear.  
+> They look good for every occasion — without buying new clothes all the time.
 
-### `npm start`
+---
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## 💡 Key Features
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+### 1. Smart Outfit Generator
+Generates personalized outfit suggestions based on:
+- 🌤 **Weather**
+- 🎓 **Occasion** (class, gym, date, party, interview)
+- 👔 **Dress code** preferences
+- 🎨 **Colors** the user feels like wearing
 
-### `npm test`
+---
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## 🧩 Core Features (by Build Priority)
 
-### `npm run build`
+### [1] Firebase Backend
+- Stores each user’s wardrobe, including uploaded pictures and tags.
+- Supports authentication, cloud storage, and real-time database.
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### [2] Outfit Recommendation Engine
+- Uses AI prompts to generate daily outfit suggestions.
+- Integrates with user wardrobe data, weather APIs, and preferences.
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+### [3] Background Remover
+- Automatically removes the photo background on clothing upload.
+- Keeps only the outfit for clean visual organization.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### [4] Closet Scanner
+- Users upload clothes via photos.
+- AI tags **color**, **type**, **season**, and **brand** — no manual sorting.
+- Powered by **Gemini** for visual recognition.
 
-### `npm run eject`
+### [5] Mass Upload Support 
+- Upload multiple wardrobe photos at once.
+- Automatically classifies all clothing items efficiently.
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+### [6] Body Type & Comfort Preferences 
+- Personalized recommendations that match real comfort levels.
+- Learns from user feedback and wardrobe data (e.g., avoids tight jeans if disliked).
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+### [7] Tinder-Style Swipe 
+- Swipe right/left on outfits or pieces to teach the AI your aesthetic.
+- Works with the recommendation engine to refine personal style over time.
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+### [8] Events Sync 
+- Syncs with **campus events** (sports, fests, club meetings).
+- Recommends outfits appropriate for each event automatically.
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+### [9] Closet Gaps Insight 
+- AI identifies missing wardrobe pieces that could complete more outfit combinations.
+- Suggests affordable additions through **affiliate links** (optional monetization).
 
-## Learn More
+### [10] Outfit History 
+- Tracks previous outfits to help users avoid repeating looks.
+- Displays “what you wore last week” to save from awkward outfit repeats.
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+---
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+## 💰 Monetization Model
 
-### Code Splitting
+**Freemium Approach**
+- 🆓 **Free Tier:** Limited daily outfit suggestions.  
+- 💎 **Premium Tier:** Unlimited suggestions, AI stylist chat, weather-based recommendations, and event sync.  
+- 🔗 **Affiliate Model:** Earn commissions through recommended wardrobe additions.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+---
 
-### Analyzing the Bundle Size
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+## 🧠 Tech Stack
 
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+| Layer | Technology |
+|-------|-------------|
+| **Frontend** | React (Cursor IDE) |
+| **Backend** | Node.js (Express) |
+| **AI / ML APIs** | Gemini API, OpenAI Vision API |
+| **Authentication** | Firebase Auth |
