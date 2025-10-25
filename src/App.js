@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Sparkles, User, LogOut, Trash2, ShoppingBag, Loader2, Home } from 'lucide-react';
+import { Upload, Sparkles, User, LogOut, Trash2, ShoppingBag, Loader2, Home, FolderOpen, Archive, CheckCircle } from 'lucide-react';
+import JSZip from 'jszip';
 
 // API Key
 const GEMINI_API_KEY = 'AIzaSyAB_Op-OSznS9AVm6QYqqfiBson5yNO46g';
@@ -199,6 +200,13 @@ export default function FitMate() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [preview, setPreview] = useState(null);
 
+  // Bulk upload states
+  const [bulkFiles, setBulkFiles] = useState([]);
+  const [bulkPreview, setBulkPreview] = useState([]);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
+  const [uploadMode, setUploadMode] = useState('single'); // 'single' or 'bulk'
+
   const [occasion, setOccasion] = useState('');
   const [recommendedOutfit, setRecommendedOutfit] = useState(null);
 
@@ -342,6 +350,159 @@ export default function FitMate() {
     }
   };
 
+  // Bulk upload functions
+  const handleBulkFileSelect = async (e) => {
+    const files = Array.from(e.target.files);
+    const imageFiles = files.filter(file => file.type.startsWith('image/'));
+    
+    if (imageFiles.length === 0) {
+      setError('Please select image files only');
+      return;
+    }
+
+    setBulkFiles(imageFiles);
+    setError('');
+    
+    // Create previews for all images
+    const previews = [];
+    for (let i = 0; i < imageFiles.length; i++) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        previews[i] = reader.result;
+        if (previews.length === imageFiles.length) {
+          setBulkPreview([...previews]);
+        }
+      };
+      reader.readAsDataURL(imageFiles[i]);
+    }
+  };
+
+  const handleZipUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      setError('Please select a ZIP file');
+      return;
+    }
+
+    setBulkLoading(true);
+    setError('');
+
+    try {
+      const zip = new JSZip();
+      const zipContent = await zip.loadAsync(file);
+      
+      const imageFiles = [];
+      const imagePromises = [];
+
+      // Extract images from zip
+      for (const [filename, zipFile] of Object.entries(zipContent.files)) {
+        if (!zipFile.dir && filename.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+          imagePromises.push(
+            zipFile.async('blob').then(blob => {
+              const file = new File([blob], filename, { type: blob.type });
+              imageFiles.push(file);
+            })
+          );
+        }
+      }
+
+      await Promise.all(imagePromises);
+      
+      if (imageFiles.length === 0) {
+        setError('No image files found in the ZIP archive');
+        setBulkLoading(false);
+        return;
+      }
+
+      setBulkFiles(imageFiles);
+      
+      // Create previews
+      const previews = [];
+      for (let i = 0; i < imageFiles.length; i++) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          previews[i] = reader.result;
+          if (previews.filter(p => p).length === imageFiles.length) {
+            setBulkPreview([...previews]);
+          }
+        };
+        reader.readAsDataURL(imageFiles[i]);
+      }
+      
+      setBulkLoading(false);
+      setSuccess(`Successfully extracted ${imageFiles.length} images from ZIP file`);
+    } catch (err) {
+      setError('Failed to process ZIP file: ' + err.message);
+      setBulkLoading(false);
+    }
+  };
+
+  const handleBulkUpload = async () => {
+    if (bulkFiles.length === 0) {
+      setError('Please select files to upload');
+      return;
+    }
+
+    setBulkLoading(true);
+    setError('');
+    setUploadProgress({ current: 0, total: bulkFiles.length });
+
+    const newItems = [];
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (let i = 0; i < bulkFiles.length; i++) {
+      try {
+        setUploadProgress({ current: i + 1, total: bulkFiles.length });
+        
+        const reader = new FileReader();
+        const result = await new Promise((resolve, reject) => {
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(bulkFiles[i]);
+        });
+
+        const base64 = result.split(',')[1];
+        const aiDescription = await analyzeClothingWithGemini(base64);
+
+        const newItem = {
+          id: `${Date.now()}_${i}`,
+          userId: currentUser.id,
+          imageUrl: result,
+          aiDescription,
+          createdAt: new Date().toISOString()
+        };
+
+        newItems.push(newItem);
+        successCount++;
+      } catch (err) {
+        console.error(`Failed to process ${bulkFiles[i].name}:`, err);
+        errorCount++;
+      }
+    }
+
+    if (newItems.length > 0) {
+      saveWardrobe([...wardrobe, ...newItems]);
+    }
+
+    setBulkLoading(false);
+    setBulkFiles([]);
+    setBulkPreview([]);
+    setUploadProgress({ current: 0, total: 0 });
+
+    if (successCount > 0) {
+      setSuccess(`Successfully uploaded ${successCount} items${errorCount > 0 ? ` (${errorCount} failed)` : ''}`);
+      setTimeout(() => {
+        setCurrentView('wardrobe');
+        setSuccess('');
+      }, 3000);
+    } else {
+      setError('Failed to upload any items');
+    }
+  };
+
   const handleDeleteItem = (itemId) => {
     saveWardrobe(wardrobe.filter(item => item.id !== itemId));
     setSuccess('Item deleted successfully');
@@ -471,7 +632,24 @@ export default function FitMate() {
           {currentView === 'home' && <HomeView setCurrentView={setCurrentView} />}
           {currentView === 'signin' && <SignInView authForm={authForm} setAuthForm={setAuthForm} handleSignIn={handleSignIn} error={error} success={success} setCurrentView={setCurrentView} />}
           {currentView === 'signup' && <SignUpView authForm={authForm} setAuthForm={setAuthForm} handleSignUp={handleSignUp} error={error} setCurrentView={setCurrentView} />}
-          {currentView === 'upload' && currentUser && <UploadView selectedFile={selectedFile} preview={preview} handleFileSelect={handleFileSelect} handleUpload={handleUpload} loading={loading} error={error} success={success} />}
+          {currentView === 'upload' && currentUser && <UploadView 
+            selectedFile={selectedFile} 
+            preview={preview} 
+            handleFileSelect={handleFileSelect} 
+            handleUpload={handleUpload} 
+            loading={loading} 
+            error={error} 
+            success={success}
+            uploadMode={uploadMode}
+            setUploadMode={setUploadMode}
+            bulkFiles={bulkFiles}
+            bulkPreview={bulkPreview}
+            handleBulkFileSelect={handleBulkFileSelect}
+            handleZipUpload={handleZipUpload}
+            handleBulkUpload={handleBulkUpload}
+            bulkLoading={bulkLoading}
+            uploadProgress={uploadProgress}
+          />}
           {currentView === 'wardrobe' && currentUser && <WardrobeView wardrobe={getUserWardrobe()} handleDeleteItem={handleDeleteItem} success={success} setCurrentView={setCurrentView} />}
           {currentView === 'outfit' && currentUser && <OutfitView occasion={occasion} setOccasion={setOccasion} handleGenerateOutfit={handleGenerateOutfit} recommendedOutfit={recommendedOutfit} loading={loading} error={error} success={success} />}
         </main>
@@ -630,13 +808,17 @@ const SignUpView = ({ authForm, setAuthForm, handleSignUp, error, setCurrentView
     </div>
 );
 
-const UploadView = ({ selectedFile, preview, handleFileSelect, handleUpload, loading, error, success }) => (
-    <div className="max-w-2xl mx-auto">
-      <h2 className="text-3xl font-bold text-gray-800 mb-6">Upload Clothing Item</h2>
+const UploadView = ({ 
+  selectedFile, preview, handleFileSelect, handleUpload, loading, error, success,
+  uploadMode, setUploadMode, bulkFiles, bulkPreview, handleBulkFileSelect, 
+  handleZipUpload, handleBulkUpload, bulkLoading, uploadProgress 
+}) => (
+    <div className="max-w-4xl mx-auto">
+      <h2 className="text-3xl font-bold text-gray-800 mb-6">Upload Clothing Items</h2>
 
       <div className="bg-white rounded-xl shadow-sm p-8">
         <p className="text-gray-600 mb-6">
-          Add a new item to your digital wardrobe. Our AI will automatically analyze and catalog it.
+          Add items to your digital wardrobe. Choose between single upload or bulk upload from multiple files or ZIP archives.
         </p>
 
         {success && <div className="bg-green-50 text-green-700 p-3 rounded-lg mb-4 text-sm flex items-center gap-2">
@@ -644,54 +826,198 @@ const UploadView = ({ selectedFile, preview, handleFileSelect, handleUpload, loa
         </div>}
         {error && <div className="bg-red-50 text-red-700 p-3 rounded-lg mb-4 text-sm">{error}</div>}
 
+        {/* Upload Mode Toggle */}
         <div className="mb-6">
-          <input
-              type="file"
-              accept="image/*"
-              onChange={handleFileSelect}
-              className="hidden"
-              id="file-upload"
-          />
-
-          <label
-              htmlFor="file-upload"
-              className="block border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-indigo-500 hover:bg-indigo-50 transition"
-          >
-            {preview ? (
-                <div className="space-y-4">
-                  <img src={preview} alt="Preview" className="max-h-96 mx-auto rounded-lg" />
-                  <p className="text-sm text-gray-600">Click to change image</p>
-                </div>
-            ) : (
-                <div className="space-y-4">
-                  <Upload className="w-16 h-16 text-gray-400 mx-auto" />
-                  <div>
-                    <p className="text-lg font-semibold text-gray-700">Click to upload</p>
-                    <p className="text-sm text-gray-500">PNG, JPG, GIF up to 5MB</p>
-                  </div>
-                </div>
-            )}
-          </label>
+          <div className="flex bg-gray-100 rounded-lg p-1">
+            <button
+              onClick={() => setUploadMode('single')}
+              className={`flex-1 py-2 px-4 rounded-md font-medium transition ${
+                uploadMode === 'single' 
+                  ? 'bg-white text-indigo-600 shadow-sm' 
+                  : 'text-gray-600 hover:text-gray-800'
+              }`}
+            >
+              Single Upload
+            </button>
+            <button
+              onClick={() => setUploadMode('bulk')}
+              className={`flex-1 py-2 px-4 rounded-md font-medium transition ${
+                uploadMode === 'bulk' 
+                  ? 'bg-white text-indigo-600 shadow-sm' 
+                  : 'text-gray-600 hover:text-gray-800'
+              }`}
+            >
+              Bulk Upload
+            </button>
+          </div>
         </div>
 
-        {selectedFile && (
-            <button
-                onClick={handleUpload}
-                disabled={loading}
-                className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 rounded-lg font-semibold hover:from-indigo-700 hover:to-purple-700 transition flex items-center justify-center gap-2 disabled:opacity-50"
+        {/* Single Upload Mode */}
+        {uploadMode === 'single' && (
+          <div className="mb-6">
+            <input
+                type="file"
+                accept="image/*"
+                onChange={handleFileSelect}
+                className="hidden"
+                id="file-upload"
+            />
+
+            <label
+                htmlFor="file-upload"
+                className="block border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-indigo-500 hover:bg-indigo-50 transition"
             >
-              {loading ? (
+              {preview ? (
+                  <div className="space-y-4">
+                    <img src={preview} alt="Preview" className="max-h-96 mx-auto rounded-lg" />
+                    <p className="text-sm text-gray-600">Click to change image</p>
+                  </div>
+              ) : (
+                  <div className="space-y-4">
+                    <Upload className="w-16 h-16 text-gray-400 mx-auto" />
+                    <div>
+                      <p className="text-lg font-semibold text-gray-700">Click to upload</p>
+                      <p className="text-sm text-gray-500">PNG, JPG, GIF up to 5MB</p>
+                    </div>
+                  </div>
+              )}
+            </label>
+
+            {selectedFile && (
+                <button
+                    onClick={handleUpload}
+                    disabled={loading}
+                    className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 rounded-lg font-semibold hover:from-indigo-700 hover:to-purple-700 transition flex items-center justify-center gap-2 disabled:opacity-50 mt-4"
+                >
+                  {loading ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Analyzing with AI...
+                      </>
+                  ) : (
+                      <>
+                        <Sparkles className="w-5 h-5" />
+                        Upload & Analyze
+                      </>
+                  )}
+                </button>
+            )}
+          </div>
+        )}
+
+        {/* Bulk Upload Mode */}
+        {uploadMode === 'bulk' && (
+          <div className="space-y-6">
+            {/* File Selection Options */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Multiple Files Upload */}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <FolderOpen className="w-5 h-5" />
+                  Upload Multiple Files
+                </h3>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleBulkFileSelect}
+                  className="hidden"
+                  id="bulk-file-upload"
+                />
+                <label
+                  htmlFor="bulk-file-upload"
+                  className="block border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-indigo-500 hover:bg-indigo-50 transition"
+                >
+                  <FolderOpen className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+                  <p className="text-sm font-medium text-gray-700">Select Multiple Images</p>
+                  <p className="text-xs text-gray-500">PNG, JPG, GIF files</p>
+                </label>
+              </div>
+
+              {/* ZIP Upload */}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <Archive className="w-5 h-5" />
+                  Upload ZIP Archive
+                </h3>
+                <input
+                  type="file"
+                  accept=".zip"
+                  onChange={handleZipUpload}
+                  className="hidden"
+                  id="zip-upload"
+                />
+                <label
+                  htmlFor="zip-upload"
+                  className="block border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-indigo-500 hover:bg-indigo-50 transition"
+                >
+                  <Archive className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+                  <p className="text-sm font-medium text-gray-700">Select ZIP File</p>
+                  <p className="text-xs text-gray-500">Extract images automatically</p>
+                </label>
+              </div>
+            </div>
+
+            {/* Bulk Preview */}
+            {bulkPreview.length > 0 && (
+              <div>
+                <h3 className="text-lg font-semibold text-gray-700 mb-3">
+                  Preview ({bulkPreview.length} images)
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 max-h-96 overflow-y-auto">
+                  {bulkPreview.map((preview, index) => (
+                    <div key={index} className="relative">
+                      <img 
+                        src={preview} 
+                        alt={`Preview ${index + 1}`} 
+                        className="w-full h-24 object-cover rounded-lg border"
+                      />
+                      <div className="absolute top-1 right-1 bg-white rounded-full p-1">
+                        <CheckCircle className="w-3 h-3 text-green-500" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Upload Progress */}
+            {uploadProgress.total > 0 && (
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-sm font-medium text-gray-700">Processing Images</span>
+                  <span className="text-sm text-gray-500">{uploadProgress.current}/{uploadProgress.total}</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
+                  ></div>
+                </div>
+              </div>
+            )}
+
+            {/* Bulk Upload Button */}
+            {bulkFiles.length > 0 && (
+              <button
+                onClick={handleBulkUpload}
+                disabled={bulkLoading}
+                className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 rounded-lg font-semibold hover:from-indigo-700 hover:to-purple-700 transition flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {bulkLoading ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    Analyzing with AI...
+                    Processing {uploadProgress.current}/{uploadProgress.total} images...
                   </>
-              ) : (
+                ) : (
                   <>
                     <Sparkles className="w-5 h-5" />
-                    Upload & Analyze
+                    Upload & Analyze {bulkFiles.length} Items
                   </>
-              )}
-            </button>
+                )}
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
