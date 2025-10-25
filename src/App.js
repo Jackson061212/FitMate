@@ -154,6 +154,29 @@ Be specific and accurate. Return ONLY valid JSON matching the schema.`;
   return attemptFetch();
 };
 
+// Background removal function
+const removeBackgroundFromImage = async (imageFile) => {
+  try {
+    const formData = new FormData();
+    formData.append('image', imageFile);
+
+    const response = await fetch('http://localhost:5001/api/process-image', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error(`Background removal failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.processedImageUrl;
+  } catch (error) {
+    console.error('Background removal error:', error);
+    throw error;
+  }
+};
+
 const generateOutfitWithGemini = async (clothingItems, occasion, userPreferences = {}) => {
   const wardrobeDescription = clothingItems.map((item, index) => ({
     id: item.id,
@@ -227,6 +250,8 @@ export default function FitMate() {
 
   const [selectedFile, setSelectedFile] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [removeBackground, setRemoveBackground] = useState(false);
+  const [processedImage, setProcessedImage] = useState(null);
 
   // Bulk upload states
   const [bulkFiles, setBulkFiles] = useState([]);
@@ -330,6 +355,8 @@ export default function FitMate() {
     const file = e.target.files[0];
     if (file) {
       setSelectedFile(file);
+      setRemoveBackground(false);
+      setProcessedImage(null);
       const reader = new FileReader();
       reader.onloadend = () => {
         setPreview(reader.result);
@@ -372,12 +399,29 @@ export default function FitMate() {
       const reader = new FileReader();
       reader.onloadend = async () => {
         try {
-          const base64 = reader.result.split(',')[1];
+          let finalImageUrl = reader.result;
+          
+          // Remove background if requested
+          if (removeBackground) {
+            try {
+              console.log('Removing background...');
+              const processedImageUrl = await removeBackgroundFromImage(selectedFile);
+              finalImageUrl = processedImageUrl;
+              setProcessedImage(processedImageUrl);
+              console.log('Background removed successfully');
+            } catch (bgError) {
+              console.warn('Background removal failed, using original image:', bgError);
+              // Continue with original image if background removal fails
+            }
+          }
+
+          const base64 = finalImageUrl.split(',')[1];
           console.log('Image details:', {
             fileName: selectedFile.name,
             fileSize: selectedFile.size,
             fileType: selectedFile.type,
-            base64Length: base64.length
+            base64Length: base64.length,
+            backgroundRemoved: removeBackground
           });
           
           const aiDescription = await analyzeClothingWithGemini(base64, selectedFile.type);
@@ -385,7 +429,7 @@ export default function FitMate() {
           const newItem = {
             id: Date.now().toString(),
             userId: currentUser.id,
-            imageUrl: reader.result,
+            imageUrl: finalImageUrl,
             aiDescription,
             createdAt: new Date().toISOString()
           };
@@ -757,6 +801,9 @@ export default function FitMate() {
             handleBulkUpload={handleBulkUpload}
             bulkLoading={bulkLoading}
             uploadProgress={uploadProgress}
+            removeBackground={removeBackground}
+            setRemoveBackground={setRemoveBackground}
+            processedImage={processedImage}
           />}
           {currentView === 'wardrobe' && currentUser && <WardrobeView wardrobe={getUserWardrobe()} handleDeleteItem={handleDeleteItem} success={success} setCurrentView={setCurrentView} />}
           {currentView === 'preferences' && currentUser && <PreferencesView userPreferences={userPreferences} handlePreferencesUpdate={handlePreferencesUpdate} success={success} error={error} />}
@@ -921,7 +968,8 @@ const SignUpView = ({ authForm, setAuthForm, handleSignUp, error, setCurrentView
 const UploadView = ({ 
   selectedFile, preview, handleFileSelect, handleUpload, loading, error, success,
   uploadMode, setUploadMode, bulkFiles, bulkPreview, handleBulkFileSelect, 
-  handleZipUpload, handleBulkUpload, bulkLoading, uploadProgress 
+  handleZipUpload, handleBulkUpload, bulkLoading, uploadProgress,
+  removeBackground, setRemoveBackground, processedImage
 }) => (
     <div className="max-w-4xl mx-auto">
       <h2 className="text-3xl font-bold text-gray-800 mb-6">Upload Clothing Items</h2>
@@ -992,6 +1040,32 @@ const UploadView = ({
                   </div>
               )}
             </label>
+
+            {/* Background Removal Options */}
+            {selectedFile && (
+              <div className="mt-4 space-y-4">
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="removeBackground"
+                    checked={removeBackground}
+                    onChange={(e) => setRemoveBackground(e.target.checked)}
+                    className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                  />
+                  <label htmlFor="removeBackground" className="ml-2 text-sm text-gray-700">
+                    Remove background automatically
+                  </label>
+                </div>
+
+                {/* Show processed image if background was removed */}
+                {processedImage && (
+                  <div className="mt-4">
+                    <p className="text-sm text-gray-600 mb-2">Background removed:</p>
+                    <img src={processedImage} alt="Processed" className="max-h-48 mx-auto rounded-lg border" />
+                  </div>
+                )}
+              </div>
+            )}
 
             {selectedFile && (
                 <button
