@@ -1,13 +1,13 @@
 {
   "files": {
-    "main.css": "/FitMate/static/css/main.c2327005.css",
-    "main.js": "/FitMate/static/js/main.88dae594.js",
+    "main.css": "/FitMate/static/css/main.6e658e5f.css",
+    "main.js": "/FitMate/static/js/main.420c6a1b.js",
     "index.html": "/FitMate/index.html",
-    "main.c2327005.css.map": "/FitMate/static/css/main.c2327005.css.map",
-    "main.88dae594.js.map": "/FitMate/static/js/main.88dae594.js.map"
+    "main.6e658e5f.css.map": "/FitMate/static/css/main.6e658e5f.css.map",
+    "main.420c6a1b.js.map": "/FitMate/static/js/main.420c6a1b.js.map"
   },
   "entrypoints": [
-    "static/css/main.c2327005.css",
-    "static/js/main.88dae594.js"
+    "static/css/main.6e658e5f.css",
+    "static/js/main.420c6a1b.js"
   ]
 }
