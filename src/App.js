@@ -4,7 +4,7 @@ import JSZip from 'jszip';
 import EventPlanner from './EventPlanner';
 
 // API Key
-const GEMINI_API_KEY = 'AlzaSyACMmigNUz9JTuunnelqtUrNMbPHzmkaPw';
+const GEMINI_API_KEY = 'AIzaSyACMmigNUz9JTuunnelqtUrNMbPHzmkaPw';
 
 // ============= API SCHEMAS =============
 const clothingAnalysisSchema = {
