@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Sparkles, User, LogOut, Trash2, ShoppingBag, Loader2, Home, FolderOpen, Archive, CheckCircle } from 'lucide-react';
+import { Upload, Sparkles, User, LogOut, Trash2, ShoppingBag, Loader2, Home, FolderOpen, Archive, CheckCircle, Settings } from 'lucide-react';
 import JSZip from 'jszip';
 
 // API Key
@@ -152,7 +152,7 @@ Be specific and accurate. Return ONLY valid JSON matching the schema.`;
   return attemptFetch();
 };
 
-const generateOutfitWithGemini = async (clothingItems, occasion) => {
+const generateOutfitWithGemini = async (clothingItems, occasion, userPreferences = {}) => {
   const wardrobeDescription = clothingItems.map((item, index) => ({
     id: item.id,
     index: index,
@@ -163,22 +163,38 @@ const generateOutfitWithGemini = async (clothingItems, occasion) => {
     fullDescription: item.aiDescription.fullDescription
   }));
 
+  const preferencesText = userPreferences ? `
+User Preferences:
+- Body Type: ${userPreferences.bodyType || 'Not specified'}
+- Comfort Preferences: ${userPreferences.comfortPreferences?.join(', ') || 'None specified'}
+- Style Preferences: ${userPreferences.stylePreferences?.join(', ') || 'None specified'}
+- Dislikes: ${userPreferences.dislikes?.join(', ') || 'None specified'}
+- Shoe Preferences: ${userPreferences.shoePreferences || 'Not specified'}
+- Fit Preferences: ${userPreferences.fitPreferences || 'Not specified'}
+` : '';
+
   const userQuery = `Create an outfit recommendation for this occasion: ${occasion}
 
 Available wardrobe items:
-${JSON.stringify(wardrobeDescription, null, 2)}`;
+${JSON.stringify(wardrobeDescription, null, 2)}
+${preferencesText}`;
 
-  const systemPrompt = `You are a professional fashion stylist. Based on the user's wardrobe and the specified occasion, recommend a complete outfit of 3-4 items.
+  const systemPrompt = `You are a professional fashion stylist. Based on the user's wardrobe, preferences, and the specified occasion, recommend a complete outfit of 3-4 items.
 
 Instructions:
 1. Select items that are appropriate for the occasion
 2. Ensure the colors complement each other
 3. Match style and formality levels
 4. Create a cohesive, fashionable look
+5. IMPORTANT: Respect the user's preferences and avoid items they dislike
+6. Consider their comfort preferences (e.g., avoid tight items if they prefer loose fits)
+7. Match their style preferences when possible
+8. Consider their shoe preferences for footwear selection
+9. Respect their fit preferences (loose, fitted, etc.)
 
 Return:
 - selectedItems: Array of item IDs (strings) that form the outfit
-- styleNote: A brief 2-3 sentence explanation of why this outfit works for the occasion
+- styleNote: A brief 2-3 sentence explanation of why this outfit works for the occasion and how it respects their preferences
 
 Return ONLY valid JSON matching the schema.`;
 
@@ -196,6 +212,16 @@ export default function FitMate() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // User preferences state
+  const [userPreferences, setUserPreferences] = useState({
+    bodyType: '',
+    comfortPreferences: [],
+    stylePreferences: [],
+    dislikes: [],
+    shoePreferences: '',
+    fitPreferences: ''
+  });
 
   const [selectedFile, setSelectedFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -256,7 +282,15 @@ export default function FitMate() {
       id: Date.now().toString(),
       name: authForm.name,
       email: authForm.email,
-      password: authForm.password
+      password: authForm.password,
+      preferences: {
+        bodyType: '',
+        comfortPreferences: [],
+        stylePreferences: [],
+        dislikes: [],
+        shoePreferences: '',
+        fitPreferences: ''
+      }
     };
 
     saveUsers([...users, newUser]);
@@ -508,6 +542,35 @@ export default function FitMate() {
     setSuccess('Item deleted successfully');
   };
 
+  // Preferences handling functions
+  const handlePreferencesUpdate = (updatedPreferences) => {
+    if (!currentUser) return;
+    
+    const updatedUser = {
+      ...currentUser,
+      preferences: { ...currentUser.preferences, ...updatedPreferences }
+    };
+    
+    const updatedUsers = users.map(user => 
+      user.id === currentUser.id ? updatedUser : user
+    );
+    
+    saveUsers(updatedUsers);
+    setCurrentUser(updatedUser);
+    setUserPreferences(updatedUser.preferences);
+    setSuccess('Preferences updated successfully!');
+  };
+
+  const loadUserPreferences = () => {
+    if (currentUser && currentUser.preferences) {
+      setUserPreferences(currentUser.preferences);
+    }
+  };
+
+  useEffect(() => {
+    loadUserPreferences();
+  }, [currentUser]);
+
   const getUserWardrobe = () => {
     return wardrobe.filter(item => item.userId === currentUser?.id);
   };
@@ -529,7 +592,7 @@ export default function FitMate() {
     setError('');
 
     try {
-      const recommendation = await generateOutfitWithGemini(userWardrobe, occasion);
+      const recommendation = await generateOutfitWithGemini(userWardrobe, occasion, currentUser?.preferences);
 
       const selectedItems = userWardrobe.filter(item =>
           recommendation.selectedItems.includes(item.id)
@@ -585,6 +648,14 @@ export default function FitMate() {
                         }`}
                     >
                       <Sparkles className="w-4 h-4" /> Get Outfit
+                    </button>
+                    <button
+                        onClick={() => { setCurrentView('preferences'); setError(''); setSuccess(''); }}
+                        className={`px-4 py-2 rounded-lg flex items-center gap-2 transition ${
+                            currentView === 'preferences' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                    >
+                      <Settings className="w-4 h-4" /> Preferences
                     </button>
                     <div className="flex items-center gap-3 ml-4 pl-4 border-l">
                       <div className="flex items-center gap-2">
@@ -651,6 +722,7 @@ export default function FitMate() {
             uploadProgress={uploadProgress}
           />}
           {currentView === 'wardrobe' && currentUser && <WardrobeView wardrobe={getUserWardrobe()} handleDeleteItem={handleDeleteItem} success={success} setCurrentView={setCurrentView} />}
+          {currentView === 'preferences' && currentUser && <PreferencesView userPreferences={userPreferences} handlePreferencesUpdate={handlePreferencesUpdate} success={success} error={error} />}
           {currentView === 'outfit' && currentUser && <OutfitView occasion={occasion} setOccasion={setOccasion} handleGenerateOutfit={handleGenerateOutfit} recommendedOutfit={recommendedOutfit} loading={loading} error={error} success={success} />}
         </main>
       </div>
@@ -1174,3 +1246,170 @@ const OutfitView = ({ occasion, setOccasion, handleGenerateOutfit, recommendedOu
       )}
     </div>
 );
+
+const PreferencesView = ({ userPreferences, handlePreferencesUpdate, success, error }) => {
+  const [preferences, setPreferences] = useState({
+    ...userPreferences,
+    // Store raw text values for input fields
+    comfortPreferencesText: userPreferences.comfortPreferences?.join(', ') || '',
+    stylePreferencesText: userPreferences.stylePreferences?.join(', ') || '',
+    dislikesText: userPreferences.dislikes?.join(', ') || ''
+  });
+
+  useEffect(() => {
+    setPreferences({
+      ...userPreferences,
+      comfortPreferencesText: userPreferences.comfortPreferences?.join(', ') || '',
+      stylePreferencesText: userPreferences.stylePreferences?.join(', ') || '',
+      dislikesText: userPreferences.dislikes?.join(', ') || ''
+    });
+  }, [userPreferences]);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    
+    // Process text fields back into arrays
+    const processedPreferences = {
+      ...preferences,
+      comfortPreferences: preferences.comfortPreferencesText.split(',').map(item => item.trim()).filter(item => item),
+      stylePreferences: preferences.stylePreferencesText.split(',').map(item => item.trim()).filter(item => item),
+      dislikes: preferences.dislikesText.split(',').map(item => item.trim()).filter(item => item)
+    };
+    
+    // Remove the temporary text fields
+    delete processedPreferences.comfortPreferencesText;
+    delete processedPreferences.stylePreferencesText;
+    delete processedPreferences.dislikesText;
+    
+    handlePreferencesUpdate(processedPreferences);
+  };
+
+  const handleArrayChange = (field, value) => {
+    setPreferences(prev => ({
+      ...prev,
+      [field]: value.split(',').map(item => item.trim()).filter(item => item)
+    }));
+  };
+
+  const handleTextChange = (field, value) => {
+    setPreferences(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  const bodyTypes = ['Petite', 'Average', 'Tall', 'Plus Size', 'Athletic', 'Curvy', 'Slim'];
+  const fitOptions = ['Loose', 'Fitted', 'Oversized', 'Regular', 'Tight'];
+  const shoeTypes = ['Sneakers', 'Boots', 'Heels', 'Flats', 'Sandals', 'Loafers', 'Athletic'];
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      <h2 className="text-3xl font-bold text-gray-800 mb-6">Style Preferences</h2>
+      
+      <div className="bg-white rounded-xl shadow-sm p-8">
+        <p className="text-gray-600 mb-6">
+          Tell us about your style preferences so we can provide more personalized outfit recommendations.
+        </p>
+
+        {success && <div className="bg-green-50 text-green-700 p-3 rounded-lg mb-6 text-sm flex items-center gap-2">
+          <Sparkles className="w-4 h-4" /> {success}
+        </div>}
+        {error && <div className="bg-red-50 text-red-700 p-3 rounded-lg mb-6 text-sm">{error}</div>}
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Body Type */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">Body Type</label>
+            <select
+              value={preferences.bodyType || ''}
+              onChange={(e) => setPreferences(prev => ({ ...prev, bodyType: e.target.value }))}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+            >
+              <option value="">Select your body type</option>
+              {bodyTypes.map(type => (
+                <option key={type} value={type}>{type}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Comfort Preferences */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">Comfort Preferences</label>
+            <input
+              type="text"
+              value={preferences.comfortPreferencesText || ''}
+              onChange={(e) => handleTextChange('comfortPreferencesText', e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+              placeholder="e.g., loose fitting, breathable fabrics, no tight waistbands"
+            />
+            <p className="text-xs text-gray-500 mt-1">Separate multiple preferences with commas</p>
+          </div>
+
+          {/* Style Preferences */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">Style Preferences</label>
+            <input
+              type="text"
+              value={preferences.stylePreferencesText || ''}
+              onChange={(e) => handleTextChange('stylePreferencesText', e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+              placeholder="e.g., casual, minimalist, bohemian, preppy, streetwear"
+            />
+            <p className="text-xs text-gray-500 mt-1">Separate multiple styles with commas</p>
+          </div>
+
+          {/* Dislikes */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">Items/Styles You Dislike</label>
+            <input
+              type="text"
+              value={preferences.dislikesText || ''}
+              onChange={(e) => handleTextChange('dislikesText', e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+              placeholder="e.g., tight jeans, high heels, bright colors, crop tops"
+            />
+            <p className="text-xs text-gray-500 mt-1">Separate multiple dislikes with commas</p>
+          </div>
+
+          {/* Shoe Preferences */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">Preferred Shoe Types</label>
+            <select
+              value={preferences.shoePreferences || ''}
+              onChange={(e) => setPreferences(prev => ({ ...prev, shoePreferences: e.target.value }))}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+            >
+              <option value="">Select preferred shoe type</option>
+              {shoeTypes.map(type => (
+                <option key={type} value={type}>{type}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Fit Preferences */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">Preferred Fit</label>
+            <select
+              value={preferences.fitPreferences || ''}
+              onChange={(e) => setPreferences(prev => ({ ...prev, fitPreferences: e.target.value }))}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+            >
+              <option value="">Select preferred fit</option>
+              {fitOptions.map(fit => (
+                <option key={fit} value={fit}>{fit}</option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            type="submit"
+            className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 rounded-lg font-semibold hover:from-indigo-700 hover:to-purple-700 transition flex items-center justify-center gap-2"
+          >
+            <Settings className="w-5 h-5" />
+            Save Preferences
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
