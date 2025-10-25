@@ -1,0 +1,13 @@
+{
+  "files": {
+    "main.css": "/FitMate/static/css/main.c2327005.css",
+    "main.js": "/FitMate/static/js/main.88dae594.js",
+    "index.html": "/FitMate/index.html",
+    "main.c2327005.css.map": "/FitMate/static/css/main.c2327005.css.map",
+    "main.88dae594.js.map": "/FitMate/static/js/main.88dae594.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.c2327005.css",
+    "static/js/main.88dae594.js"
+  ]
+}
